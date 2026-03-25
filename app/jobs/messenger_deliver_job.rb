@@ -1,25 +1,26 @@
 # frozen_string_literal: true
 
-require 'net/http'
-require 'uri'
-
 class MessengerDeliverJob < ActiveJob::Base
   queue_as :default
 
   def perform(url, params)
-    uri = URI url
-    http_options = { use_ssl: uri.scheme == 'https' }
-    http_options[:verify_mode] = OpenSSL::SSL::VERIFY_NONE unless RedmineMessenger.setting? :messenger_verify_ssl
-    begin
-      req = Net::HTTP::Post.new uri
-      req.set_form_data payload: params.to_json
-      Net::HTTP.start uri.hostname, uri.port, http_options do |http|
-        response = http.request req
-        Rails.logger.warn response.inspect unless [Net::HTTPSuccess, Net::HTTPRedirection, Net::HTTPOK].include? response
-      end
-    rescue StandardError => e
-      Rails.logger.warn "cannot connect to #{url}"
-      Rails.logger.warn e
-    end
+    uri = URI.parse(url)
+    http = Net::HTTP.new(uri.host, uri.port)
+    http.use_ssl = (uri.scheme == 'https')
+    http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+    request = Net::HTTP::Post.new(uri.request_uri)
+    request['Content-Type'] = 'application/json'
+
+    # Forzamos la serialización a JSON estricto
+    payload = params.to_json
+    request.body = payload
+
+    # Dejamos un log para ver exactamente qué salió
+    Rails.logger.error ">>> ENVIANDO A ROCKETCHAT: #{payload}"
+
+    http.request(request)
+  rescue StandardError => e
+    Rails.logger.error ">>> ERROR EN MESSENGER: #{e.message}"
   end
 end

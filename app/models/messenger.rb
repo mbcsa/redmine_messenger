@@ -30,10 +30,18 @@ class Messenger
       url ||= RedmineMessenger.setting :messenger_url
       return if url.blank? || channels.blank?
 
-      params = { text: msg, link_names: 1 }
+      # 1. Aseguramos que el texto nunca sea nulo
+      texto_final = msg.presence || "Notificación de ticket (sin detalles)"
+      params = { text: texto_final, link_names: 1 }
+
       username = textfield_for_project options[:project], :messenger_username
       params[:username] = username if username.present?
-      params[:attachments] = options[:attachment]&.any? ? [options[:attachment]] : []
+
+      # 2. LA CLAVE: Solo enviamos attachments si REALMENTE hay contenido
+      if options[:attachment].present? && options[:attachment].any?
+        params[:attachments] = [options[:attachment]]
+      end
+
       icon = textfield_for_project options[:project], :messenger_icon
       if icon.present?
         if icon.start_with? ':'
@@ -42,10 +50,16 @@ class Messenger
           params[:icon_url] = icon
         end
       end
+      # Limpiamos canales vacíos y duplicados antes de iterar
+      canales_limpios = channels.reject(&:blank?).uniq
+ 
+      canales_limpios.each do |channel|
+        # Nos aseguramos de que el canal tenga el prefijo # si no lo tiene
+      nombre_canal = channel.strip
+      nombre_canal = "##{nombre_canal}" unless nombre_canal.start_with?('#')
 
-      channels.each do |channel|
-        params[:channel] = channel
-        MessengerDeliverJob.perform_later url, params
+      params[:channel] = nombre_canal
+      MessengerDeliverJob.perform_later url, params
       end
     end
 
@@ -254,11 +268,24 @@ class Messenger
     end
 
     def mentions(project, text)
-      names = textfield_for_project(project, :default_mentions).split(',')
-                                                               .map { |m| names.push m.strip }
-      names += extract_usernames text unless text.nil?
-      names.present? ? " To: #{names.uniq.join ', '}" : nil
+      # Obtenemos las menciones por defecto y las limpiamos
+      default_mentions = textfield_for_project(project, :default_mentions).to_s.split(',').map(&:strip).reject(&:blank?)
+      
+      # Extraemos menciones del texto (ej: @usuario)
+      extracted_names = text.present? ? extract_usernames(text) : []
+      
+      # Unimos ambos arrays
+      all_names = default_mentions + extracted_names
+      
+      all_names.present? ? " To: #{all_names.uniq.join(', ')}" : nil
     end
+
+    #def mentions(project, text)
+    #  names = textfield_for_project(project, :default_mentions).split(',')
+    #                                                           .map { |m| names.push m.strip }
+    #  names += extract_usernames text unless text.nil?
+    #  names.present? ? " To: #{names.uniq.join ', '}" : nil
+    #end
 
     private
 
